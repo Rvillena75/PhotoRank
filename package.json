@@ -1,0 +1,65 @@
+{
+  "name": "photorank",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.ts",
+  "scripts": {
+    "postinstall": "node tools/sync-ort-web-runtime.mjs",
+    "start": "expo start --dev-client",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "jest --runInBand",
+    "test:e2e": "node tools/e2e/smoke.mjs"
+  },
+  "dependencies": {
+    "@noble/hashes": "2.0.1",
+    "expo": "~57.0.11",
+    "expo-asset": "~57.0.9",
+    "expo-dev-client": "~57.0.10",
+    "expo-file-system": "~57.0.2",
+    "expo-image-manipulator": "~57.0.8",
+    "expo-image-picker": "~57.0.8",
+    "expo-sharing": "~57.0.10",
+    "expo-status-bar": "~57.0.1",
+    "fast-png": "8.0.0",
+    "onnxruntime-react-native": "1.24.3",
+    "onnxruntime-web": "1.18.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.2",
+    "react-native-get-random-values": "~1.11.0",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-web": "~0.21.2",
+    "ts-trueskill": "5.0.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.55.0",
+    "@testing-library/react-native": "^13.3.3",
+    "@types/jest": "29.5.14",
+    "@types/react": "~19.2.2",
+    "eslint": "^9.39.1",
+    "eslint-config-expo": "~57.0.1",
+    "jest-expo": "~57.0.3",
+    "react-test-renderer": "19.2.3",
+    "typescript": "~6.0.3"
+  },
+  "overrides": {
+    "ts-trueskill": {
+      "uuid": "11.1.1"
+    }
+  },
+  "jest": {
+    "preset": "jest-expo",
+    "setupFilesAfterEnv": [
+      "<rootDir>/jest.setup.js"
+    ],
+    "transformIgnorePatterns": [
+      "/node_modules/(?!(.pnpm|react-native|@react-native|@react-native-community|expo|@expo|@expo-google-fonts|react-navigation|@react-navigation|@sentry/react-native|native-base|standard-navigation|ts-trueskill|ts-gaussian|uuid))",
+      "/node_modules/react-native-reanimated/plugin/",
+      "/node_modules/@react-native/babel-preset/"
+    ]
+  }
+}

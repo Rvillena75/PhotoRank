@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "PhotoRank",
+    "slug": "photorank",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.photorank.app"
+    },
+    "android": {
+      "package": "com.photorank.app",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-dev-client",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "PhotoRank necesita acceso a tus fotos para que puedas compararlas localmente."
+        }
+      ],
+      "expo-sharing",
+      "expo-asset"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "7d539eee-fb7c-4874-95aa-d5c73f970ed6"
+      }
+    }
+  }
+}

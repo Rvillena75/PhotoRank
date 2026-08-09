@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "modelId": "torchvision-mobilenet-v3-small-imagenet1k-v1-pooled-576",
+  "modelVersion": "1.0.0",
+  "file": "mobilenet_v3_small_imagenet1k_v1_pooled_l2.onnx",
+  "sha256": "9f509ca76501fc2087fdb972d0b20f7ee6b43be131b5c25888d56192f791f0e8",
+  "source": {
+    "framework": "torchvision",
+    "architecture": "mobilenet_v3_small",
+    "weights": "MobileNet_V3_Small_Weights.IMAGENET1K_V1",
+    "checkpointUrl": "https://download.pytorch.org/models/mobilenet_v3_small-047dcff4.pth",
+    "checkpointSha256": "047dcff4addef86ea5bc2eff13c9614dc11f47ab1160d0a71a25e7db994f4e1f",
+    "widthMult": 1.0,
+    "reducedTail": false,
+    "dilated": false
+  },
+  "graph": {
+    "opset": 17,
+    "inputName": "image",
+    "inputDtype": "float32",
+    "inputShape": [
+      1,
+      3,
+      224,
+      224
+    ],
+    "outputName": "embedding",
+    "outputDtype": "float32",
+    "outputShape": [
+      1,
+      576
+    ],
+    "extractionPoint": "features.avgpool.flatten",
+    "l2Normalization": {
+      "p": 2,
+      "axis": 1,
+      "epsilon": 1e-12
+    },
+    "quantization": "none"
+  },
+  "preprocessing": {
+    "exifOrientation": "normalize",
+    "colorSpace": "sRGB",
+    "channels": "RGB",
+    "resizeShortSide": 256,
+    "interpolation": "bilinear",
+    "antialias": true,
+    "centerCrop": [
+      224,
+      224
+    ],
+    "valueRange": [
+      0,
+      1
+    ],
+    "mean": [
+      0.485,
+      0.456,
+      0.406
+    ],
+    "std": [
+      0.229,
+      0.224,
+      0.225
+    ]
+  },
+  "toolchain": {
+    "python": "3.12.3",
+    "torch": "2.5.1+cpu",
+    "torchvision": "0.20.1+cpu",
+    "onnx": "1.17.0",
+    "onnxruntime": "1.20.1",
+    "exporter": "torch.onnx.export"
+  },
+  "license": {
+    "code": "torchvision: BSD-3-Clause",
+    "weights": "distributed by torchvision 0.20.1 under its BSD-3-Clause package license",
+    "datasetTerms": "ImageNet terms of access apply to the source training dataset"
+  }
+}
