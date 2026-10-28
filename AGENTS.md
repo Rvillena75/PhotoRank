@@ -30,10 +30,24 @@ Las fases 1–4 están implementadas: fundación Expo + React Native + TypeScrip
 ranking puro, flujo Top K y pipeline visual local. El artefacto ONNX, su
 manifiesto, exportador reproducible y fixtures de paridad están versionados.
 Web tiene validación funcional con inferencia real; la validación en
-Development Build de Android continúa pendiente y forma parte del trabajo
-activo. La validación nativa de iOS está diferida por la pausa de plataforma.
+Development Build de Android ya compila en EAS. La instalación, inferencia y
+paridad numérica en un dispositivo Android físico continúan pendientes y forman
+parte del trabajo activo. La validación nativa de iOS está diferida por la pausa
+de plataforma.
 
 Las fases 5–7 (grupos, carrusel y endurecimiento final) no están implementadas.
+
+La Fase 3.1 permanece abierta para calibración humana. El flujo activo usa una
+comparación informativa de cobertura por foto, `2N` como checkpoint no
+bloqueante, revisiones cada `0,5N` y `4N` como límite de seguridad. Si persiste
+ambigüedad, el usuario confirma exactamente K fotos; esa resolución se conserva
+separada del posterior. Los selectores experimentales del benchmark no están
+conectados a producción.
+
+Para el piloto del MVP, desde 20 decisiones presentadas y con cobertura completa
+se ofrece una revisión voluntaria del Top K. Confirma exactamente K y registra
+`source = user-confirmation`, sin aumentar la estabilidad ni bloquear seguir
+comparando. El fallback obligatorio conserva `source = hard-limit`.
 
 ## Stack obligatorio
 
@@ -46,6 +60,11 @@ Las fases 5–7 (grupos, carrusel y endurecimiento final) no están implementada
 - `onnxruntime-web` con WASM/CPU como baseline web.
 - Estado simple; Zustand es aceptable, Redux requiere una justificación concreta.
 - Sin backend, autenticación, cloud, inferencia remota ni APIs de IA.
+
+`onnxruntime-react-native` 1.24.3 necesita el parche reproducible de
+`tools/patch-onnxruntime-react-native.mjs` para Gradle 9. No editar su copia en
+`node_modules` manualmente. Al cambiar esa versión, revisar y validar el parche
+antes de actualizar el lockfile.
 
 ## Arquitectura esperada
 

@@ -10,13 +10,21 @@ import {
   evaluateStopRecommendation,
   seedFromText,
 } from './src/domain/confidence';
-import type { StopRecommendation } from './src/domain/confidence';
+import type { StopRecommendation, TopKConfidenceResult } from './src/domain/confidence';
 import { AdaptivePairSelectionEngine } from './src/domain/pair-selection';
-import { applyComparison, createRankingSession, getTopK, undoLastComparison } from './src/domain/rating';
-import type { ComparisonOutcome, RankingSession } from './src/domain/rating';
+import {
+  applyComparison,
+  createManualTopKResolution,
+  createRankingSession,
+  getTopK,
+  rankPhotoIds,
+  undoLastComparison,
+} from './src/domain/rating';
+import type { ComparisonOutcome, ManualTopKResolution, RankingSession } from './src/domain/rating';
 import { TsTrueSkillRatingEngine } from './src/infrastructure/rating';
 import {
   ComparisonScreen,
+  BoundaryResolutionScreen,
   HomeScreen,
   AnalyzingPhotosScreen,
   PausedScreen,
@@ -37,7 +45,8 @@ const pairSelectionEngine = new AdaptivePairSelectionEngine();
 const confidenceEstimator = new MonteCarloTopKConfidenceEstimator();
 
 function simulationSeed(session: RankingSession, k: number): number {
-  const eventText = session.history.map((record) => `${record.id}:${record.leftPhotoId}:${record.rightPhotoId}:${record.outcome.type}`).join('|');
+  const eventText = session.history.filter((record) => record.outcome.type !== 'skip')
+    .map((record) => `${record.leftPhotoId}:${record.rightPhotoId}:${record.outcome.type}`).join('|');
   return seedFromText(`${k}|${session.photoIds.join('|')}|${eventText}`);
 }
 
@@ -58,8 +67,10 @@ export default function App({ createEmbeddingEngine = createPlatformEmbeddingEng
   const [failedPhotoIds, setFailedPhotoIds] = useState<readonly string[]>([]);
   const [k, setK] = useState(5);
   const [session, setSession] = useState<RankingSession | undefined>();
+  const [confidence, setConfidence] = useState<TopKConfidenceResult | undefined>();
   const [stopState, setStopState] = useState(INITIAL_STOP_RECOMMENDATION_STATE);
   const [recommendation, setRecommendation] = useState<StopRecommendation | undefined>();
+  const [manualResolution, setManualResolution] = useState<ManualTopKResolution | undefined>();
   const [analysisStatus, setAnalysisStatus] = useState<VisualAnalysisStatus>('idle');
   const [analysisProgress, setAnalysisProgress] = useState<VisualAnalysisProgress>({ completed: 0, total: 0 });
   const [analysisMessage, setAnalysisMessage] = useState<string | undefined>();
@@ -73,18 +84,19 @@ export default function App({ createEmbeddingEngine = createPlatformEmbeddingEng
   }, []);
 
   const photosById = useMemo(() => Object.freeze(Object.fromEntries(photos.map((photo) => [photo.id, photo]))) as Readonly<Record<string, PhotoAsset>>, [photos]);
-  const confidence = useMemo(
-    () => session ? confidenceEstimator.estimate(session, k, createSeededRandom(simulationSeed(session, k))) : undefined,
-    [session, k],
-  );
   const pair = useMemo(
     () => session ? pairSelectionEngine.selectNextPair({ ...session, k }) : undefined,
     [session, k],
   );
+  const rankedPhotos = useMemo(() => {
+    if (!session) return [];
+    return rankPhotoIds(session.ratings).map((photoId) => photosById[photoId]).filter((photo): photo is PhotoAsset => photo !== undefined);
+  }, [photosById, session]);
   const topPhotos = useMemo(() => {
     if (!session) return [];
-    return getTopK(session, k).map((photoId) => photosById[photoId]).filter((photo): photo is PhotoAsset => photo !== undefined);
-  }, [k, photosById, session]);
+    const selectedPhotoIds = manualResolution?.selectedPhotoIds ?? getTopK(session, k);
+    return selectedPhotoIds.map((photoId) => photosById[photoId]).filter((photo): photo is PhotoAsset => photo !== undefined);
+  }, [k, manualResolution, photosById, session]);
 
   const updatePhotos = (nextPhotos: readonly PhotoAsset[]) => {
     setPhotos(Object.freeze([...nextPhotos]));
@@ -97,13 +109,15 @@ export default function App({ createEmbeddingEngine = createPlatformEmbeddingEng
     const initialConfidence = confidenceEstimator.estimate(rankingSession, k, createSeededRandom(simulationSeed(rankingSession, k)));
     const initialStop = evaluateStopRecommendation(rankingSession, initialConfidence, INITIAL_STOP_RECOMMENDATION_STATE);
     setSession(rankingSession);
+    setConfidence(initialConfidence);
     setStopState(initialStop.state);
     setRecommendation(initialStop.recommendation);
+    setManualResolution(undefined);
     setScreen('comparison');
   };
 
   const recordOutcome = (type: ComparisonOutcome['type']) => {
-    if (!session || !pair || recommendation?.isMaximumReached) return;
+    if (!session || !pair || recommendation?.canContinueComparing === false) return;
     const nextSession = applyComparison(session, {
       id: `comparison-${session.history.length + 1}`,
       leftPhotoId: pair.leftPhotoId,
@@ -111,21 +125,29 @@ export default function App({ createEmbeddingEngine = createPlatformEmbeddingEng
       outcome: { type },
       createdAt: Date.now(),
     }, ratingEngine);
-    const nextConfidence = confidenceEstimator.estimate(nextSession, k, createSeededRandom(simulationSeed(nextSession, k)));
+    const nextConfidence = type === 'skip' && confidence
+      ? confidence
+      : confidenceEstimator.estimate(nextSession, k, createSeededRandom(simulationSeed(nextSession, k)));
     const nextStop = evaluateStopRecommendation(nextSession, nextConfidence, stopState);
     setSession(nextSession);
+    setConfidence(nextConfidence);
     setStopState(nextStop.state);
     setRecommendation(nextStop.recommendation);
+    setManualResolution(undefined);
   };
 
   const undo = () => {
     if (!session) return;
     const nextSession = undoLastComparison(session, ratingEngine);
-    const nextConfidence = confidenceEstimator.estimate(nextSession, k, createSeededRandom(simulationSeed(nextSession, k)));
+    const nextConfidence = session.history.at(-1)?.outcome.type === 'skip' && confidence
+      ? confidence
+      : confidenceEstimator.estimate(nextSession, k, createSeededRandom(simulationSeed(nextSession, k)));
     const nextStop = evaluateStopRecommendation(nextSession, nextConfidence, INITIAL_STOP_RECOMMENDATION_STATE);
     setSession(nextSession);
+    setConfidence(nextConfidence);
     setStopState(nextStop.state);
     setRecommendation(nextStop.recommendation);
+    setManualResolution(undefined);
     setScreen('comparison');
   };
 
@@ -133,8 +155,10 @@ export default function App({ createEmbeddingEngine = createPlatformEmbeddingEng
     analysisAttemptRef.current += 1;
     analysisRunnerRef.current?.clear();
     setSession(undefined);
+    setConfidence(undefined);
     setStopState(INITIAL_STOP_RECOMMENDATION_STATE);
     setRecommendation(undefined);
+    setManualResolution(undefined);
     setAnalysisStatus('idle');
     setAnalysisMessage(undefined);
     setScreen('setup');
@@ -179,6 +203,13 @@ export default function App({ createEmbeddingEngine = createPlatformEmbeddingEng
   const loadError = (photoId: string) => setFailedPhotoIds((current) => current.includes(photoId) ? current : Object.freeze([...current, photoId]));
   const retryPhoto = (photoId: string) => setFailedPhotoIds((current) => current.includes(photoId) ? Object.freeze(current.filter((id) => id !== photoId)) : current);
 
+  const resolveTopK = (selectedPhotoIds: readonly string[]) => {
+    if (!session || !recommendation?.canReviewSelection) return;
+    const source = recommendation.requiresManualResolution ? 'hard-limit' : 'user-confirmation';
+    setManualResolution(createManualTopKResolution(session, k, selectedPhotoIds, Date.now(), source));
+    setScreen('top-k-result');
+  };
+
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.safeArea}>
@@ -199,24 +230,39 @@ export default function App({ createEmbeddingEngine = createPlatformEmbeddingEng
           /> : null}
           {screen === 'comparison' && session && confidence && recommendation ? <ComparisonScreen
             canUndo={session.history.length > 0}
+            comparisonCount={session.history.length}
             confidence={confidence}
+            k={k}
             onOutcome={recordOutcome}
             onPause={() => setScreen('paused')}
+            onResolve={() => setScreen('boundary-resolution')}
             onUndo={undo}
             onViewResult={() => setScreen('top-k-result')}
             pair={pair}
             photosById={photosById}
             recommendation={recommendation}
           /> : null}
+          {screen === 'boundary-resolution' && session ? <BoundaryResolutionScreen
+            initialSelectedPhotoIds={manualResolution?.selectedPhotoIds ?? getTopK(session, k)}
+            k={k}
+            onConfirm={resolveTopK}
+            onViewProvisional={() => setScreen('top-k-result')}
+            rankedPhotos={rankedPhotos}
+          /> : null}
           {screen === 'paused' ? <PausedScreen onContinue={() => setScreen('comparison')} onRestart={restart} onResult={() => setScreen('top-k-result')} /> : null}
           {screen === 'top-k-result' && confidence ? <TopKResultScreen
             confidence={confidence}
+            canContinue={recommendation?.canContinueComparing ?? true}
+            canReviewSelection={Boolean(recommendation?.canReviewSelection && !manualResolution)}
             k={k}
             onContinue={() => setScreen('comparison')}
             onCreateCarousel={startVisualAnalysis}
             onRestart={restart}
+            onResolve={() => setScreen('boundary-resolution')}
             onUndo={undo}
             rankedPhotos={topPhotos}
+            requiresManualResolution={Boolean(recommendation?.requiresManualResolution && !manualResolution)}
+            wasManuallyResolved={Boolean(manualResolution)}
           /> : null}
           {screen === 'visual-analysis' ? <AnalyzingPhotosScreen
             message={analysisMessage}

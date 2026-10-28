@@ -48,6 +48,13 @@ tensor por foto.
 - iOS: el mismo runtime y contrato quedan preservados, con desarrollo y validación diferidos.
 - No se usa ONNX Runtime Extensions ni WebGPU.
 
+La versión 1.24.3 publicada en npm usa `VersionNumber` en su configuración
+Android, una API eliminada por Gradle 9. `tools/patch-onnxruntime-react-native.mjs`
+aplica durante `postinstall` la corrección equivalente a la rama principal de
+Microsoft: parsea explícitamente la versión major/minor de React Native y evita
+`VersionNumber`. El script exige exactamente 1.24.3 y los fragmentos de origen
+esperados; ante cualquier cambio falla en vez de parchear parcialmente.
+
 El runtime Web 1.18 no expone metadata de shapes/tipos en su API pública. Por
 eso la inicialización Web verifica el hash exacto del grafo ya inspeccionado por
 el exportador y los nombres de sesión; crea el input desde el shape/tipo del
@@ -87,9 +94,13 @@ entre `0.9999997019` y `1.0000002384`.
   preprocesaron e infirieron con el ONNX/WASM empaquetado, sin errores de consola.
   El adaptador valida shape, tipo, finitud y norma L2 de cada salida.
 - **Android:** bundle Metro/Hermes generado correctamente con el ONNX empaquetado;
-  Development Build y paridad numérica en dispositivo no validados por falta de
-  Android SDK, Java, Gradle, emulador y dispositivo. Esta validación permanece
-  dentro del alcance activo.
+  el primer Development Build en EAS falló durante la evaluación Gradle de
+  `onnxruntime-react-native` por el uso eliminado de `VersionNumber`. Se añadió
+  el parche reproducible descrito arriba. El segundo build, ejecutado sin caché,
+  terminó correctamente y generó un APK de desarrollo en EAS
+  (`d4e881a3-7edd-46b3-8309-15b695b61a66`). La instalación, la ejecución de
+  inferencia real y la paridad numérica en un dispositivo físico aún deben
+  validarse. Esta validación permanece dentro del alcance activo.
 - **iOS:** bundle Metro/Hermes generado correctamente con el ONNX empaquetado;
   Development Build y paridad numérica no validados. El desarrollo nativo de
   Apple está pausado por decisión de producto hasta que el usuario pueda

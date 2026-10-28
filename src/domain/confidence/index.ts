@@ -2,9 +2,11 @@ export { MonteCarloTopKConfidenceEstimator } from './monte-carlo-top-k-confidenc
 export { createSeededRandom, seedFromText } from './seeded-random';
 export {
   evaluateStopRecommendation,
+  getDynamicDecisionBudget,
   getCoverage,
   INITIAL_STOP_RECOMMENDATION_STATE,
 } from './stop-recommendation';
+export type { DynamicDecisionBudget } from './stop-recommendation';
 export type {
   RandomSource,
   StabilityLevel,

@@ -2,3 +2,20 @@ node_modules/
 .expo/
 dist/
 coverage/
+local-data/
+
+# Local configuration and signing credentials
+.env
+.env.*
+!.env.example
+!.env.sample
+*.keystore
+*.jks
+*.p12
+*.p8
+*.mobileprovision
+*.key
+
+# Local installation artifacts
+*.apk
+*.aab

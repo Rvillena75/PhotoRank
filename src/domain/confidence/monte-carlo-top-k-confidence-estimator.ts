@@ -35,10 +35,12 @@ export class MonteCarloTopKConfidenceEstimator implements TopKConfidenceEstimato
   estimate(session: RankingSession, k: number, random: RandomSource): TopKConfidenceResult {
     const estimatedTopK = getTopK(session, k);
     const expectedMembership = membershipKey(estimatedTopK);
+    const expectedMembershipSet = new Set(estimatedTopK);
     const expectedOrder = orderedKey(estimatedTopK);
     const inclusionCounts = Object.fromEntries(session.photoIds.map((photoId) => [photoId, 0])) as Record<string, number>;
     let membershipMatches = 0;
     let orderMatches = 0;
+    let totalTopKOverlap = 0;
 
     for (let sampleIndex = 0; sampleIndex < this.sampleCount; sampleIndex += 1) {
       const samples = session.photoIds.map((photoId) => {
@@ -51,6 +53,7 @@ export class MonteCarloTopKConfidenceEstimator implements TopKConfidenceEstimato
       for (const photoId of sampledTopK) {
         inclusionCounts[photoId] = (inclusionCounts[photoId] ?? 0) + 1;
       }
+      totalTopKOverlap += sampledTopK.filter((photoId) => expectedMembershipSet.has(photoId)).length / k;
       if (membershipKey(sampledTopK) === expectedMembership) membershipMatches += 1;
       if (orderedKey(sampledTopK) === expectedOrder) orderMatches += 1;
     }
@@ -62,6 +65,7 @@ export class MonteCarloTopKConfidenceEstimator implements TopKConfidenceEstimato
     const orderStability = orderMatches / this.sampleCount;
     return Object.freeze({
       inclusionProbabilities,
+      expectedTopKOverlap: totalTopKOverlap / this.sampleCount,
       membershipStability,
       orderStability,
       primaryStability: k === session.photoIds.length ? orderStability : membershipStability,

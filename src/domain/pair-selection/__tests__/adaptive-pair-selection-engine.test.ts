@@ -51,15 +51,15 @@ describe('AdaptivePairSelectionEngine', () => {
     let session: RankingSession = createRankingSession(['a', 'b', 'c', 'd', 'e'], ratingEngine);
     let decisions = 0;
 
-    while (Object.values(session.ratings).some(({ matches }) => matches < 2) && decisions < 20) {
+    while (Object.values(session.ratings).some(({ matches }) => matches < 1) && decisions < 20) {
       const pair = selectedOrThrow({ ...session, k: 2 });
       expect(pair.stage).toBe('coverage');
       session = applyComparison(session, comparison(`match-${decisions + 1}`, pair), ratingEngine);
       decisions += 1;
     }
 
-    expect(Object.values(session.ratings).every(({ matches }) => matches >= 2)).toBe(true);
-    expect(decisions).toBeLessThanOrEqual(10);
+    expect(Object.values(session.ratings).every(({ matches }) => matches >= 1)).toBe(true);
+    expect(decisions).toBeLessThanOrEqual(3);
     expect(selector.selectNextPair({ ...session, k: 2 })?.stage).toBe('adaptive');
   });
 

@@ -1,6 +1,42 @@
 # Ranking algorithms
 
+La revisión de rapidez y las correcciones posteriores del evaluador están en
+[`RANKING_SPEED_REVIEW.md`](RANKING_SPEED_REVIEW.md). La variante de producción
+del benchmark usa la parada de dominio; `legacy-stop.ts` conserva la regla
+histórica. Los resultados numéricos anteriores se mantienen como históricos.
+
 Las fases 2 y 3 implementan ranking probabilístico, historial, `undo`, Top K provisional, selección adaptativa, confianza Monte Carlo y criterio de detención como TypeScript puro. Los módulos de dominio no importan React Native. La fase 4 añade ONNX únicamente detrás de `ImageEmbeddingEngine`; clustering y carrusel permanecen fuera de alcance.
+
+## Benchmark sintético
+
+`tools/ranking-benchmark/` ejecuta el mismo `RatingEngine`, selector adaptativo
+y estimador Monte Carlo de producción sobre ids ficticios, sin necesitar archivos
+de imagen. Una fixture declara tiers ordenados y grupos; un simulador con semilla
+inyectada genera procesos deterministas, consistentes, habituales y ambiguos con
+draw, skip, sesgo de lado y contradicciones.
+
+El reporte separa decisiones presentadas, comparaciones informativas y tiempo de
+interacción modelado. Para fidelidad informa solapamiento canónico y tolerante a
+tiers, recall de las primeras tres, orden tolerante a tiers, estabilidad declarada
+y su error de calibración. El criterio principal no es coincidencia exacta del
+orden: fotos del mismo tier son equivalentes.
+
+La evaluación `group-diverse-reference` es un contrato previo a MMR: selecciona
+una foto por grupo para medir el costo de usar el Top K directamente y comprobar
+las invariantes del futuro carrusel. No es todavía `CarouselRecommendationEngine`
+ni una validación del MMR real.
+
+La auditoría de 2026-08-11 corrigió ids objetivo correlacionados con el desempate,
+seeds distintos por variante y un `recall@3` que exigía orden interno. También
+añadió un holdout de 25 fotos y controles que aíslan selector, parada y
+presupuesto. Se evaluaron selectores de ganancia de información, Top-Two
+Thompson, evidencia balanceada y un posterior Bradley–Terry global. Todos son
+candidatos de investigación accesibles desde el benchmark; ninguno está
+conectado a la aplicación ni superó la frontera del baseline. La decisión de
+producción demostró que los gates de fidelidad y un límite rígido `2N` eran
+incompatibles bajo los perfiles ruidosos. Por decisión de producto, `2N` pasó a
+ser checkpoint y no límite. Véase
+`docs/RANKING_BENCHMARK_CONCLUSIONS.md`.
 
 ## Límites y contratos
 
@@ -16,7 +52,12 @@ La UI futura consumirá estos contratos; no conocerá `Rating`, `TrueSkill` ni f
 
 Se adoptó `ts-trueskill` 5.0.1 exacto tras comprobar que publica tipos, ESM ES2020 y admite el runtime Node 22 del proyecto. Se prefirió 5.0.1 sobre 5.1.0 porque esta última instala una rama de `mathjs` afectada por avisos de seguridad; 5.0.1 usa `mathjs` 12.4.3. `uuid` se fuerza a 11.1.1 —la misma major adoptada por `ts-trueskill` 5.1— para incluir su corrección de seguridad. La prueba de ejecución 1-vs-1 produjo posteriores finitos y el adaptador se empaquetó con Metro para Web, iOS y Android.
 
-`uuid` necesita `crypto.getRandomValues`; el adaptador carga primero `react-native-get-random-values` 2.0.0, compatible con React Native >=0.81 y con entrada no-op para Web. Jest necesita transformar `ts-trueskill`, `ts-gaussian` y `uuid` porque son ESM; la lista está declarada en `package.json` y los tests usan el adaptador real, no un mock.
+`uuid` necesita `crypto.getRandomValues`; Web y Node usan su implementación
+nativa y el adaptador carga `react-native-get-random-values` 2.0.0 solo cuando la
+ruta nativa lo necesita. El shim es compatible con React Native >=0.81 y tiene
+entrada no-op para Web. Jest necesita transformar `ts-trueskill`, `ts-gaussian` y
+`uuid` porque son ESM; la lista está declarada en `package.json` y los tests usan
+el adaptador real, no un mock.
 
 El adaptador `TsTrueSkillRatingEngine` crea un entorno con los parámetros centralizados:
 
@@ -57,7 +98,30 @@ K=1 y K=N están definidos. Para K=N no existe frontera de pertenencia; el selec
 - `orderStability` es la frecuencia de que reaparezca la secuencia Top K completa.
 - `primaryStability` es pertenencia salvo en `K=N`, donde toda foto pertenece de forma trivial y se usa orden.
 
-El criterio de detención exige cobertura de dos comparaciones informativas por foto, ocho decisiones como mínimo y estabilidad durante tres decisiones consecutivas. Para evitar parpadeos, entra con pertenencia/orden de 0,86/0,70 y permanece dentro de la banda hasta bajar de 0,80/0,62. El máximo centralizado es 100 decisiones. Estos son umbrales de UX, no una promesa matemática: el usuario puede terminar provisionalmente o continuar siempre.
+El criterio exige una comparación informativa por foto, ocho decisiones
+informativas como mínimo, `expectedTopKOverlap` de entrada 0,90/salida 0,84 y
+pertenencia sin cambios durante tres decisiones informativas. El orden interno
+no bloquea la finalización. Para evitar parpadeos se conserva histéresis.
+
+El presupuesto es dinámico: checkpoint en `max(8, 2N)`, revisión cada
+`ceil(0,5N)` y límite de seguridad en
+`max(checkpoint + extensionBlock, 4N)`. El checkpoint no bloquea comparaciones.
+Al límite, una resolución humana muestra todas las fotos, preselecciona el Top K
+estimado y exige exactamente K. `ManualTopKResolution` conserva esa decisión
+separada de ratings, historial y confianza.
+
+Para el piloto, `earlyReviewDecisions = 20` habilita además una revisión
+voluntaria cuando la cobertura está completa. `canReviewSelection` expresa la
+disponibilidad de revisión; `requiresManualResolution` conserva la obligación
+por límite. Confirmar no cambia la confianza ni los ratings. La resolución
+guarda `user-confirmation` o `hard-limit` según su origen. El benchmark automático
+continúa hasta estabilidad o límite: no simula la selección humana a las 20.
+
+En 720 sesiones sintéticas, la política `2N→4N` elevó el overlap automático de
+78,0% a 84,0% y el recall de favoritas de 87,8% a 93,1% frente al corte rígido
+`2N`. En el holdout obtuvo 84,2%/92,5%. La resolución humana se activó en 65,4%
+de las sesiones; esa tasa confirma que todavía hace falta calibración con
+personas antes de cerrar la Fase 3.1.
 
 ## Selección de pares
 

@@ -22,3 +22,8 @@ Crear carrusel analiza, solo tras ese gesto, todas las fotos válidas de la sesi
 La fase termina después de obtener embeddings válidos. Similitud, matriz,
 clustering, revisión humana y recomendación MMR siguen explícitamente fuera de
 alcance.
+
+Para el piloto de ranking, tras 20 decisiones y cobertura completa se ofrece
+terminar mediante una revisión voluntaria de todas las fotos con K sugeridas
+preseleccionadas. Exige confirmar exactamente K y conserva la selección humana
+separada de la confianza automática. Seguir comparando continúa disponible.

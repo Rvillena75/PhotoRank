@@ -4,7 +4,7 @@
   "private": true,
   "main": "index.ts",
   "scripts": {
-    "postinstall": "node tools/sync-ort-web-runtime.mjs",
+    "postinstall": "node tools/postinstall.mjs",
     "start": "expo start --dev-client",
     "android": "expo start --android",
     "ios": "expo start --ios",
@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "jest --runInBand",
-    "test:e2e": "node tools/e2e/smoke.mjs"
+    "test:e2e": "node tools/e2e/smoke.mjs",
+    "benchmark:ranking": "tsx tools/ranking-benchmark/run.ts"
   },
   "dependencies": {
     "@noble/hashes": "2.0.1",
@@ -44,6 +45,7 @@
     "eslint-config-expo": "~57.0.1",
     "jest-expo": "~57.0.3",
     "react-test-renderer": "19.2.3",
+    "tsx": "4.23.12",
     "typescript": "~6.0.3"
   },
   "overrides": {

@@ -1,10 +1,18 @@
-import 'react-native-get-random-values';
-
 import { Rating, TrueSkill, rate_1vs1 } from 'ts-trueskill';
 
 import type { ComparisonOutcome, PhotoRating, RatedPair, RatingEngine } from '../../domain/rating';
 import { DEFAULT_RANKING_CONFIG } from '../../domain/ranking-config';
 import type { RatingParameters } from '../../domain/ranking-config';
+
+function ensureCryptoRandomValues(): void {
+  if (typeof globalThis.crypto?.getRandomValues === 'function') return;
+  // Node and Web expose crypto natively. Native React Native needs the small
+  // shim, loaded only on that path so the pure benchmark can run in Node.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('react-native-get-random-values');
+}
+
+ensureCryptoRandomValues();
 
 function assertFiniteRating(rating: PhotoRating): void {
   const numericValues = [

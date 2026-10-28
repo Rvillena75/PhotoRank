@@ -8,6 +8,8 @@ export interface RandomSource {
 
 export interface TopKConfidenceResult {
   readonly inclusionProbabilities: Readonly<Record<PhotoId, number>>;
+  /** Expected fraction of the current Top K that reappears in a posterior sample. */
+  readonly expectedTopKOverlap: number;
   /** Frequency with which the estimated current Top K membership recurs. */
   readonly membershipStability: number;
   /** Frequency with which the complete ordered current Top K recurs. */
@@ -27,12 +29,30 @@ export interface StopRecommendation {
   readonly coverage: number;
   readonly stabilityLevel: StabilityLevel;
   readonly isStable: boolean;
+  readonly isCheckpointReached: boolean;
+  readonly isReviewPoint: boolean;
+  readonly isHardLimitReached: boolean;
+  readonly canContinueComparing: boolean;
+  readonly requiresManualResolution: boolean;
+  /** Voluntary confirmation after the early review threshold and full coverage. */
+  readonly canReviewSelection: boolean;
+  readonly checkpointDecisions: number;
+  readonly nextReviewDecision: number;
+  readonly hardLimitDecisions: number;
+  /** Compatibility alias for the former fixed maximum. */
   readonly isMaximumReached: boolean;
   readonly stableDecisionCount: number;
-  readonly reason: 'collecting-coverage' | 'collecting-evidence' | 'stable' | 'maximum-reached';
+  readonly reason:
+    | 'collecting-coverage'
+    | 'collecting-evidence'
+    | 'checkpoint-reached'
+    | 'extending-evidence'
+    | 'stable'
+    | 'resolution-required';
 }
 
 export interface StopRecommendationState {
   readonly wasStable: boolean;
   readonly consecutiveStableDecisions: number;
+  readonly lastMembershipKey?: string;
 }

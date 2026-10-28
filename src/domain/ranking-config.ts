@@ -35,6 +35,13 @@ export interface TopKConfidenceParameters {
   readonly samples: number;
   readonly initialCoverageMatches: number;
   readonly minimumDecisions: number;
+  readonly earlyReviewDecisions: number;
+  readonly checkpointMultiplier: number;
+  readonly extensionBlockMultiplier: number;
+  readonly hardMaximumMultiplier: number;
+  readonly expectedOverlapEnterThreshold: number;
+  readonly expectedOverlapExitThreshold: number;
+  /** Legacy fixed cap retained only for frozen benchmark variants. */
   readonly maximumDecisions: number;
   readonly membershipEnterThreshold: number;
   readonly membershipExitThreshold: number;
@@ -53,7 +60,7 @@ export const DEFAULT_RANKING_CONFIG: RankingConfig = Object.freeze({
     conservativeSigmaMultiplier: 3,
   }),
   pairSelection: Object.freeze({
-    initialCoverageMatches: 2,
+    initialCoverageMatches: 1,
     skipCooldownDecisions: 3,
     repeatCooldownDecisions: 2,
     coverageDeficitWeight: 10,
@@ -71,8 +78,14 @@ export const DEFAULT_RANKING_CONFIG: RankingConfig = Object.freeze({
   }),
   confidence: Object.freeze({
     samples: 1000,
-    initialCoverageMatches: 2,
+    initialCoverageMatches: 1,
     minimumDecisions: 8,
+    earlyReviewDecisions: 20,
+    checkpointMultiplier: 2,
+    extensionBlockMultiplier: 0.5,
+    hardMaximumMultiplier: 4,
+    expectedOverlapEnterThreshold: 0.9,
+    expectedOverlapExitThreshold: 0.84,
     maximumDecisions: 100,
     membershipEnterThreshold: 0.86,
     membershipExitThreshold: 0.8,

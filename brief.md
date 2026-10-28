@@ -37,6 +37,41 @@ Antes de modificar código:
 
 ---
 
+# 0. ESTADO DE IMPLEMENTACIÓN
+
+Este estado evita repetir trabajo terminado y debe actualizarse al cerrar cada
+fase. Un check significa código implementado y validado en el alcance indicado;
+no implica que la aplicación completa esté terminada.
+
+- [x] **Fase 1 — Fundación:** Expo + React Native + TypeScript strict,
+  navegación/flujo base, tema, configuración, documentación y comandos de
+  validación.
+- [x] **Fase 2 — Ranking base:** `RatingEngine` con TrueSkill encapsulado,
+  historial inmutable, winner/loser, draw, skip, undo, reconstrucción, Top K y
+  tests de dominio.
+- [x] **Fase 3 — Flujo Top K original:** selector de fotos, comparación,
+  Monte Carlo, pausa, resultado provisional y compartir/exportar localmente.
+- [ ] **Fase 3.1 — Ranking rápido y benchmark:** sustituir el criterio original
+  demasiado estricto por el algoritmo y banco de pruebas definidos en las
+  secciones 6, 8, 9 y 28. Esta es la prioridad inmediata y debe cerrarse antes
+  de implementar grupos o carrusel.
+- [ ] **Fase 4 — Pipeline visual, cierre Android:** exportador, ONNX, manifiesto,
+  preprocesamiento, paridad PyTorch/ONNX y flujo Web ya están implementados. El
+  Development Build Android compila en EAS; falta ejecutar inferencia real y
+  registrar paridad en un dispositivo Android físico. iOS sigue diferido.
+- [ ] **Fase 5 — Grupos:** matriz de similitud, complete-linkage y revisión
+  humana obligatoria.
+- [ ] **Fase 6 — Carrusel:** selección y orden MMR, edición, reemplazos, agregar
+  más y exportación local.
+- [ ] **Fase 7 — Endurecimiento:** accesibilidad, rendimiento, errores,
+  permisos, E2E y validación integral en Web y Android.
+
+No reimplementar las fases marcadas como terminadas salvo que una fase pendiente
+requiera una modificación explícita. El trabajo activo, en orden, es: Fase 3.1,
+cierre Android de Fase 4, Fase 5, Fase 6 y Fase 7.
+
+---
+
 # 1. VISIÓN DEL PRODUCTO
 
 La app permite seleccionar un conjunto de fotos y descubrir cuáles le gustan más al usuario mediante comparaciones extremadamente sencillas.
@@ -193,32 +228,49 @@ Implementar un `PairSelectionEngine` puro y testeable.
 Antes de concentrarse en las favoritas:
 
 * intentar que todas las fotos participen;
-* dar aproximadamente 2–3 comparaciones iniciales por foto;
+* exigir solo 1 comparación informativa por foto;
+* emparejar preferentemente dos fotos que todavía no tengan cobertura, para
+  completar esta etapa en aproximadamente `ceil(N / 2)` decisiones cuando no
+  existan `skip`;
 * evitar enfrentamientos repetidos innecesarios;
 * equilibrar cuántas veces una foto aparece a izquierda y derecha para reducir sesgo de posición.
 
+`left`, `right` y `draw` aportan cobertura. `skip` registra que el par fue
+mostrado y activa cooldown, pero no satisface cobertura porque no actualiza el
+posterior.
+
 ## Etapa B — Ranking adaptativo
 
-Después de la cobertura básica, priorizar parejas que:
+Después de la cobertura básica, concentrar las comparaciones en identificar la
+frontera de pertenencia al Top K, no en perfeccionar prematuramente el orden
+interno. En cada decisión:
 
-1. tengan ratings relativamente similares;
-2. tengan alta incertidumbre;
-3. estén cerca del límite del Top K;
-4. puedan cambiar quién entra o sale del Top K;
-5. no se hayan enfrentado recientemente;
-6. no hayan sido saltadas recientemente como pareja.
+1. estimar `topKProbability` de todas las fotos;
+2. identificar las integrantes actuales menos seguras del Top K;
+3. identificar las candidatas exteriores con mayor probabilidad de entrar;
+4. priorizar un cruce de frontera cuyo resultado pueda cambiar la selección y
+   cuya preferencia relativa permanezca incierta;
+5. respetar cooldown por repetición y `skip`;
+6. introducir exploración ocasional de fotos con poca evidencia para evitar que
+   una clasificación inicial equivocada quede bloqueada.
 
 Para K = 5, comparar #4 con #6 suele aportar más que comparar #1 con #25.
 
 Diseñar una función explícita de prioridad que pueda combinar:
 
-* incertidumbre;
-* cercanía de ratings;
-* cercanía a la frontera K;
+* probabilidad de inclusión;
+* incertidumbre del enfrentamiento;
+* impacto esperado sobre la frontera K/K+1;
 * cantidad de encuentros previos;
 * total de comparaciones;
 * penalización por repetición;
-* cooldown después de `skip`.
+* cooldown después de `skip`;
+* exploración de baja exposición.
+
+El benchmark de la sección 28 debe comparar el selector actual con al menos un
+selector de retador de frontera. No cambiar TrueSkill ni fijar pesos nuevos por
+intuición: elegir los parámetros usando la frontera observada entre fidelidad y
+número de comparaciones.
 
 No colocar esta lógica dentro de componentes de UI.
 
@@ -259,7 +311,8 @@ Estimar la estabilidad mediante Monte Carlo:
 1. tomar la distribución posterior `N(mu, sigma)` de cada foto;
 2. ejecutar muestras simuladas;
 3. obtener el Top K de cada muestra;
-4. calcular la frecuencia estimada de inclusión de cada foto.
+4. calcular la frecuencia estimada de inclusión de cada foto;
+5. calcular cuántas posiciones del Top K actual se conservan en promedio.
 
 Mantener la simulación aislada y determinista bajo tests mediante inyección de RNG.
 
@@ -271,31 +324,86 @@ En la UI hablar de **estabilidad**, no de certeza matemática:
 * bastante estable;
 * muy estable.
 
-Distinguir:
+La métrica principal es:
 
-* estabilidad de pertenencia al Top K;
-* estabilidad del orden interno.
+```text
+expectedTopKOverlap =
+  sum(topKProbability[photoId] para cada foto del Top K actual) / K
+```
 
-Cuando `K = N`, la pertenencia es trivial y el progreso debe depender de la estabilidad del orden, no de la probabilidad de inclusión.
+Interpreta `0.90` como una conservación esperada de 4,5 fotos en un Top 5. No
+equivale a certeza matemática ni exige que el conjunto completo reaparezca
+idéntico en cada muestra.
+
+Mantener como diagnósticos separados:
+
+* probabilidad individual de inclusión;
+* coincidencia exacta del conjunto Top K;
+* estabilidad aproximada o exacta del orden interno.
+
+La coincidencia exacta del conjunto y del orden no bloquea la finalización. Un
+intercambio entre dos fotos casi equivalentes no debe convertir un resultado
+útil en una sesión interminable.
+
+Cuando `K = N`, la pertenencia es trivial: terminar la selección al completar la
+cobertura y tratar cualquier refinamiento del orden como opcional.
 
 ---
 
 # 9. CRITERIO DE DETENCIÓN
 
-No exigir un número fijo de comparaciones.
+No exigir estabilidad perfecta ni un número fijo de comparaciones. Para `K < N`,
+recomendar finalizar cuando se cumplan simultáneamente:
 
-El sistema puede recomendar finalizar cuando:
+* todas las fotos tienen al menos una comparación informativa;
+* `expectedTopKOverlap >= 0.90` como threshold inicial;
+* el Top K no presenta cambios importantes durante 3 decisiones informativas
+  consecutivas;
+* se alcanzó el mínimo dinámico de evidencia definido en configuración.
 
-* todas las fotos tengan cobertura mínima;
-* el conjunto Top K permanezca estable durante suficientes decisiones;
-* la probabilidad de inclusión alrededor de la frontera sea razonable;
-* se haya superado un mínimo de comparaciones.
+El orden interno nunca es condición de detención. El threshold `0.90`, el mínimo
+dinámico y los pesos del selector deben calibrarse con el benchmark; cualquier
+cambio posterior se documenta y no se ajusta silenciosamente para hacer pasar
+un fixture concreto.
 
 Agregar histéresis para que el estado de estabilidad no oscile continuamente.
 
 Centralizar thresholds y límites en configuración.
 
-Debe existir un límite máximo de comparaciones.
+Para la prueba del MVP, ofrecer **Terminar y revisar mi Top K** a partir de
+20 decisiones presentadas (incluidos `skip`), siempre que todas las fotos tengan
+al menos una comparación informativa. El umbral se centraliza en configuración.
+Es una opción voluntaria: no exige ni declara estabilidad automática, no detiene
+los duelos y permite seguir comparando. La revisión muestra todas las fotos,
+preselecciona las K recomendadas y exige confirmar exactamente K. Se registra
+como `source = user-confirmation`, separada del posterior y de la resolución
+obligatoria por límite (`source = hard-limit`). Con 20 fotos y K=5, esta opción
+permite cerrar la selección tras 20 decisiones si la cobertura está completa.
+Si al llegar a 20 aún falta cobertura, se habilita cuando se complete.
+
+`max(8, 2 * N)` decisiones presentadas, incluidos `skip`, es el primer
+**checkpoint**, no un límite rígido. Al alcanzarlo:
+
+* si el Top K ya cumple el criterio de estabilidad, recomendar finalizar;
+* si sigue ambiguo, permitir ver el resultado provisional o continuar sin perder
+  el historial;
+* revisar de nuevo cada `ceil(0.5 * N)` decisiones adicionales;
+* explicar que las comparaciones extra se concentran en las candidatas difíciles.
+
+Existe un límite de seguridad de `max(checkpoint + extensionBlock, 4 * N)`
+decisiones presentadas. No generar más duelos automáticamente después de ese
+límite.
+
+Si al llegar al límite de seguridad el Top K continúa ambiguo, mostrar una
+resolución humana ampliada con todas las fotos de la sesión. La recomendación
+automática aparece preseleccionada y el usuario elige exactamente K fotos,
+pudiendo reemplazar cualquiera. Esta selección final:
+
+* pertenece al usuario;
+* se registra separada del rating probabilístico;
+* conserva el posterior y la estabilidad declarada sin falsificarlos;
+* no se interpreta como nueva evidencia ni actualiza `mu` o `sigma`;
+* bloquea la creación del carrusel hasta confirmar exactamente K fotos.
 
 Al alcanzar estabilidad suficiente, mostrar:
 
@@ -307,7 +415,13 @@ Ofrecer:
 
 * Ver resultado;
 * Seguir comparando;
+* Afinar el orden de forma opcional y con presupuesto pequeño;
 * Ver resultado provisional antes de alcanzar estabilidad completa.
+
+No presentar 100% como meta. Durante la comparación priorizar estados
+comprensibles: **Conociendo tus fotos**, **Definiendo las últimas candidatas** y
+**Top K suficientemente estable**. Los porcentajes técnicos pueden aparecer en
+diagnóstico o resultado, pero no como barra que el usuario deba completar.
 
 El usuario puede pausar o abandonar la sesión. Reiniciar o abandonar progreso requiere confirmación.
 
@@ -480,6 +594,14 @@ Usar:
 * WebGPU únicamente como aceleración opcional con fallback automático;
 * realizar el preprocesamiento en adaptadores propios por plataforma;
 * no usar ONNX Runtime Extensions en el MVP.
+
+Mientras la versión fijada `onnxruntime-react-native` 1.24.3 requiera la
+corrección de compatibilidad con Gradle 9 que ya existe en la rama principal de
+Microsoft, aplicarla mediante un script `postinstall` reproducible que valide
+versión y fuente esperada antes de modificar `node_modules`. No mantener una
+edición manual ni aceptar un parche parcial. Al actualizar la dependencia,
+revisar explícitamente si el workaround puede eliminarse y repetir el
+Development Build y la paridad Android.
 
 Encapsular el runtime detrás de:
 
@@ -819,11 +941,27 @@ No mostrar dos modos independientes.
 * estabilidad discreta;
 * salir/pausar con confirmación.
 
+## Resolución final del Top K
+
+Puede abrirse voluntariamente a partir de 20 decisiones con cobertura completa,
+o al alcanzar el límite de seguridad con pertenencia todavía ambigua:
+
+* muestra todas las fotos ordenadas por la estimación actual;
+* preselecciona el Top K automático;
+* permite reemplazar cualquier integrante;
+* exige exactamente K fotos para confirmar;
+* en el cierre voluntario explica que el usuario puede confirmar sus favoritas
+  sin esperar estabilidad; en el límite informa de la ambigüedad restante;
+* no altera retroactivamente el historial, ratings ni confianza estadística;
+* permite ampliar cada foto antes de decidir.
+
 ## Resultado Top K
 
 * ranking visual;
 * estabilidad comprensible;
 * seguir comparando;
+* aceptar el orden estimado, afinarlo opcionalmente o reordenarlo cuando la UI
+  correspondiente esté disponible;
 * compartir/exportar selección;
 * CTA Crear carrusel.
 
@@ -979,6 +1117,10 @@ src/
   state/
   utils/
   theme/
+tools/
+  ranking-benchmark/
+local-data/
+  ranking/              # siempre ignorado por Git
 ```
 
 Interfaces principales:
@@ -987,6 +1129,7 @@ Interfaces principales:
 RatingEngine
 PairSelectionEngine
 TopKConfidenceEstimator
+RankingBenchmarkRunner
 ImageEmbeddingEngine
 PhotoSimilarityEngine
 PhotoGroupingEngine
@@ -996,6 +1139,8 @@ CarouselRecommendationEngine
 Requisitos:
 
 * rating, selección de pares, confianza, clustering y recomendación deben testearse sin React Native;
+* el benchmark usa los mismos motores de dominio que producción y no una copia
+  divergente del algoritmo;
 * ONNX Runtime solo aparece en infraestructura;
 * UI consume casos de uso, no librerías matemáticas o de ML;
 * estado derivado se recalcula cuando sea barato;
@@ -1147,6 +1292,99 @@ Probar como mínimo:
 18. el historial puede reconstruir la sesión.
 
 No intentar demostrar mediante tests cuál foto debería gustarle a una persona.
+
+## Benchmark de rapidez y fidelidad
+
+Antes de cerrar la Fase 3.1, crear `tools/ranking-benchmark/` y exponer el comando
+estable `npm run benchmark:ranking`. Debe ejecutar sesiones completas sin React
+Native, con RNG inyectado, y producir un resultado JSON reproducible más un
+resumen legible. No inventar resultados si el comando todavía no existe.
+
+Comparar como mínimo:
+
+1. implementación actual como baseline congelada;
+2. cobertura de una comparación con selector actual;
+3. cobertura de una comparación con retador de frontera;
+4. retador de frontera con `expectedTopKOverlap` y el nuevo stop;
+5. variantes razonables de thresholds y pesos, usando los mismos seeds.
+
+Cada configuración se evalúa con perfiles determinista, consistente, humano
+habitual y altamente ambiguo. El simulador puede usar Bradley-Terry/logística
+sobre utilidades latentes derivadas de los tiers para que fotos cercanas tengan
+más draws y resultados contradictorios. También debe variar `skip`, sesgo de
+lado y repetición inconsistente. Este modelo simula ruido; no afirma modelar
+universalmente el gusto humano.
+
+Métricas obligatorias:
+
+* comparaciones presentadas e informativas: media, mediana y percentil 90;
+* solapamiento con el Top K objetivo;
+* frecuencia de Top K exacto como diagnóstico, no objetivo único;
+* recall de las primeras `min(3, K)` fotos;
+* calidad del orden interno mediante una métrica tolerante a tiers;
+* frecuencia de checkpoints, extensiones y resolución manual final;
+* calibración entre estabilidad declarada y fidelidad empírica;
+* comportamiento con draw, skip, empates y resultados contradictorios.
+
+La corrida corregida demostró que no es válido agregar con el mismo peso los
+perfiles determinista, consistente, habitual y altamente ambiguo: el último no
+contiene señal estable suficiente para exigir recuperación automática con el
+mismo presupuesto. Evaluar y reportar cada perfil por separado.
+
+Para el escenario principal `N = 20–30`, `K = 5`, usar estas reglas de
+evaluación mientras se obtiene calibración humana:
+
+* `2N` se mide como checkpoint de UX, no como gate de finalización automática;
+* ninguna sesión automática supera el límite de seguridad `4N` salvo el mínimo
+  estructural `checkpoint + extensionBlock`;
+* overlap, recall de favoritas y al menos K-1 aciertos se reportan por perfil y
+  fixture, no solo como promedio global;
+* `ambiguous` es un stress/fallback: medir activación y corrección manual, no
+  exigir que el posterior recupere un target estable inexistente;
+* medir por separado resultado automático y selección final resuelta por el
+  usuario;
+* no congelar nuevos thresholds numéricos de fidelidad hasta contrastarlos con
+  sesiones humanas y holdout.
+
+Estos gates son hipótesis iniciales. Elegir una configuración por su frontera de
+Pareto entre fidelidad y esfuerzo, no mediante un puntaje opaco que permita
+ocultar una regresión importante.
+
+## Fixtures personales y calibración humana
+
+Las fotos personales se guardan únicamente en
+`local-data/ranking/<album>/photos/`, directorio ignorado por Git. Cada álbum
+incluye un `target.json` local con K y tiers ordenados:
+
+```json
+{
+  "k": 5,
+  "tiers": [
+    ["IMG_008.jpg"],
+    ["IMG_014.jpg"],
+    ["IMG_003.jpg", "IMG_019.jpg"],
+    ["IMG_011.jpg"],
+    ["IMG_006.jpg", "IMG_021.jpg"],
+    ["IMG_002.jpg"]
+  ]
+}
+```
+
+Cada archivo aparece exactamente una vez. Fotos dentro del mismo tier se
+consideran aproximadamente equivalentes; si un tier cruza la frontera K,
+cualquiera de sus integrantes equivalentes puede satisfacer esa posición. Un
+orden exacto se expresa con una foto por tier.
+
+Usar idealmente al menos dos álbumes para ajustar y un tercero como holdout. Las
+fotos no son necesarias para la simulación pura, pero sí para calibrar el ruido
+personal mediante una sesión local estratificada por distancia de ranking. Esa
+calibración debe incluir comparaciones cercanas, medias y lejanas, además de
+algunas repeticiones posteriores con lados invertidos, y estimar consistencia,
+draw, skip y sesgo de posición. No subir fotos, preferencias ni resultados.
+
+No elegir parámetros usando el álbum holdout. Después del benchmark, validar la
+configuración ganadora con sesiones humanas completas antes de congelarla en el
+brief.
 
 ---
 
@@ -1350,10 +1588,18 @@ La tarea está completa solamente cuando:
 * se elige K;
 * comparaciones funcionan;
 * draw, skip y undo funcionan;
-* selección adaptativa funciona;
-* estabilidad funciona;
+* cobertura inicial requiere solo una comparación informativa por foto;
+* selección adaptativa prioriza retadores de frontera y conserva exploración;
+* `expectedTopKOverlap` funciona y está calibrado;
+* coincidencia exacta del orden no bloquea la finalización;
+* checkpoint `2N`, extensiones `0.5N`, límite de seguridad `4N` y resolución
+  humana ampliada funcionan;
+* la revisión voluntaria desde 20 decisiones con cobertura completa confirma
+  exactamente K sin alterar la confianza automática;
 * resultado Top K funciona;
-* el usuario puede detenerse o continuar.
+* el usuario puede detenerse o continuar;
+* el benchmark reproducible satisface los gates acordados en fixtures de ajuste
+  y mantiene resultados aceptables en holdout y pruebas humanas.
 
 ## Similitud y grupos
 
@@ -1422,17 +1668,18 @@ Antes de finalizar:
 3. ejecutar lint;
 4. ejecutar unit tests;
 5. ejecutar tests de ranking, clustering y carrusel;
-6. levantar Web;
-7. inspeccionar visualmente el flujo completo;
-8. probar Development Build en Android;
-9. registrar iOS como diferido y no ejecutar trabajo nativo de Apple mientras la pausa esté activa; retomar su Development Build solo tras indicación expresa del usuario;
-10. ejecutar smoke/E2E disponibles;
-11. revisar consola por errores;
-12. revisar memoria y cleanup durante análisis visual;
-13. revisar `git diff`;
-14. buscar código muerto, TODOs accidentales y mocks activos;
-15. corregir problemas encontrados;
-16. repetir validaciones relevantes.
+6. ejecutar `npm run benchmark:ranking` y conservar su reporte reproducible;
+7. levantar Web;
+8. inspeccionar visualmente el flujo completo;
+9. probar Development Build en Android;
+10. registrar iOS como diferido y no ejecutar trabajo nativo de Apple mientras la pausa esté activa; retomar su Development Build solo tras indicación expresa del usuario;
+11. ejecutar smoke/E2E disponibles;
+12. revisar consola por errores;
+13. revisar memoria y cleanup durante análisis visual;
+14. revisar `git diff`;
+15. buscar código muerto, TODOs accidentales y mocks activos;
+16. corregir problemas encontrados;
+17. repetir validaciones relevantes.
 
 Al terminar, entregar un reporte breve con:
 

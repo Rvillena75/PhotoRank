@@ -9,3 +9,5 @@ export type {
   RatedPair,
   RankingSession,
 } from './types';
+export { createManualTopKResolution } from './manual-top-k-resolution';
+export type { ManualTopKResolution } from './manual-top-k-resolution';

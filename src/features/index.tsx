@@ -20,7 +20,14 @@ import { colors, spacing } from '../theme';
 import { DEVELOPMENT_PHOTO_FIXTURES, canStartRanking, validateSelectedPhotos } from './photo-picker';
 import { sharePhoto, shareSelection } from './ranking/export-selection';
 
-export type FlowScreen = 'home' | 'setup' | 'comparison' | 'paused' | 'top-k-result' | 'visual-analysis';
+export type FlowScreen =
+  | 'home'
+  | 'setup'
+  | 'comparison'
+  | 'paused'
+  | 'boundary-resolution'
+  | 'top-k-result'
+  | 'visual-analysis';
 
 export type VisualAnalysisScreenStatus = 'idle' | 'running' | 'cancelling' | 'complete' | 'error';
 
@@ -222,7 +229,7 @@ function StabilityCopy({ confidence, recommendation }: Readonly<{ confidence: To
       <Text style={styles.stabilityBody}>
         {recommendation.reason === 'collecting-coverage'
           ? `Aún damos cobertura a todas las fotos (${Math.round(recommendation.coverage * 100)}%).`
-          : `Pertenencia ${Math.round(confidence.membershipStability * 100)}% · orden ${Math.round(confidence.orderStability * 100)}%.`}
+          : `Estabilidad esperada del Top K ${Math.round(confidence.expectedTopKOverlap * 100)}%.`}
       </Text>
     </View>
   );
@@ -233,26 +240,32 @@ export function ComparisonScreen({
   photosById,
   confidence,
   recommendation,
+  k,
   canUndo,
+  comparisonCount,
   onOutcome,
   onUndo,
   onViewResult,
+  onResolve,
   onPause,
 }: Readonly<{
   pair: SelectedPair | undefined;
   photosById: Readonly<Record<string, PhotoAsset>>;
   confidence: TopKConfidenceResult;
   recommendation: StopRecommendation;
+  k: number;
   canUndo: boolean;
+  comparisonCount: number;
   onOutcome: (outcome: 'left' | 'right' | 'draw' | 'skip') => void;
   onUndo: () => void;
   onViewResult: () => void;
+  onResolve: () => void;
   onPause: () => void;
 }>): ReactNode {
   const [viewerPhoto, setViewerPhoto] = useState<PhotoAsset | undefined>();
   const left = pair ? photosById[pair.leftPhotoId] : undefined;
   const right = pair ? photosById[pair.rightPhotoId] : undefined;
-  const isLocked = recommendation.isMaximumReached || !pair || !left || !right;
+  const isLocked = !recommendation.canContinueComparing || !pair || !left || !right;
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.addEventListener !== 'function' || viewerPhoto || isLocked) return undefined;
@@ -273,12 +286,30 @@ export function ComparisonScreen({
   return (
     <ScreenLayout>
       <View style={styles.comparisonHeader}>
-        <View><Text accessibilityRole="header" style={styles.title}>¿Cuál prefieres?</Text><Text style={styles.note}>{pair?.stage === 'coverage' ? 'Conociendo todas tus fotos' : 'Afinando tu Top K'}</Text></View>
+        <View><Text accessibilityRole="header" style={styles.title}>¿Cuál prefieres?</Text><Text style={styles.note}>{pair?.stage === 'coverage' ? 'Conociendo todas tus fotos' : recommendation.isCheckpointReached ? 'Resolviendo las candidatas más difíciles' : 'Afinando tu Top K'}</Text></View>
         <PrimaryButton kind="secondary" label="Pausar sesión" onPress={onPause} />
       </View>
       <StabilityCopy confidence={confidence} recommendation={recommendation} />
+      <Text accessibilityLiveRegion="polite" style={styles.note}>{comparisonCount} comparaciones realizadas</Text>
       {recommendation.isStable ? <View style={styles.successCard}><Text style={styles.successText}>Tu Top K ya está bastante estable.</Text><PrimaryButton label="Ver resultado" onPress={onViewResult} /></View> : null}
-      {recommendation.isMaximumReached ? <View style={styles.warningCard}><Text style={styles.warningText}>Alcanzaste el límite de comparaciones. Puedes ver tu resultado actual.</Text><PrimaryButton label="Ver resultado provisional" onPress={onViewResult} /></View> : null}
+      {recommendation.canReviewSelection && !recommendation.requiresManualResolution ? (
+        <View style={styles.warningCard}>
+          <Text style={styles.warningText}>Puedes terminar aquí: revisa las {k} fotos sugeridas y confirma tus favoritas, o sigue comparando.</Text>
+          <PrimaryButton label={`Terminar y revisar mi Top ${k}`} onPress={onResolve} />
+        </View>
+      ) : null}
+      {recommendation.isReviewPoint && !recommendation.isStable && !recommendation.isHardLimitReached ? (
+        <View style={styles.warningCard}>
+          <Text style={styles.warningText}>Llegaste a un punto de revisión. Puedes ver el resultado provisional o seguir comparando; revisaremos de nuevo en la decisión {recommendation.nextReviewDecision}.</Text>
+          <PrimaryButton label="Ver resultado provisional" onPress={onViewResult} />
+        </View>
+      ) : null}
+      {recommendation.requiresManualResolution ? (
+        <View style={styles.warningCard}>
+          <Text style={styles.warningText}>Las preferencias siguen ambiguas después de {recommendation.hardLimitDecisions} decisiones. Elige directamente las {k} fotos que formarán tu Top K.</Text>
+          <PrimaryButton label="Resolver mi Top K" onPress={onResolve} />
+        </View>
+      ) : null}
       {left && right ? (
         <View style={styles.comparisonPhotos}>
           <Pressable accessibilityRole="button" accessibilityLabel={`Ampliar foto izquierda: ${filename(left)}`} disabled={isLocked} onPress={() => setViewerPhoto(left)} style={styles.comparisonPhoto}><PhotoPreview photo={left} /><Text style={styles.comparisonFilename}>{filename(left)}</Text></Pressable>
@@ -295,6 +326,55 @@ export function ComparisonScreen({
       <PrimaryButton disabled={!canUndo || Boolean(viewerPhoto)} kind="secondary" label="Deshacer última decisión" onPress={onUndo} />
       <PrimaryButton kind="secondary" label="Ver Top K provisional" onPress={onViewResult} />
       <Text style={styles.shortcuts}>Web: ← izquierda · → derecha · espacio saltar · Z deshacer</Text>
+      <PhotoViewer photo={viewerPhoto} onClose={() => setViewerPhoto(undefined)} />
+    </ScreenLayout>
+  );
+}
+
+export function BoundaryResolutionScreen({
+  rankedPhotos,
+  k,
+  initialSelectedPhotoIds,
+  onConfirm,
+  onViewProvisional,
+}: Readonly<{
+  rankedPhotos: readonly PhotoAsset[];
+  k: number;
+  initialSelectedPhotoIds: readonly string[];
+  onConfirm: (selectedPhotoIds: readonly string[]) => void;
+  onViewProvisional: () => void;
+}>): ReactNode {
+  const [selectedPhotoIds, setSelectedPhotoIds] = useState<readonly string[]>(initialSelectedPhotoIds);
+  const [viewerPhoto, setViewerPhoto] = useState<PhotoAsset | undefined>();
+  const selected = new Set(selectedPhotoIds);
+  const toggle = (photoId: string) => {
+    if (selected.has(photoId)) {
+      setSelectedPhotoIds(selectedPhotoIds.filter((selectedPhotoId) => selectedPhotoId !== photoId));
+      return;
+    }
+    if (selectedPhotoIds.length < k) setSelectedPhotoIds([...selectedPhotoIds, photoId]);
+  };
+  return (
+    <ScreenLayout>
+      <Text accessibilityRole="header" style={styles.title}>Decide tu Top {k}</Text>
+      <Text style={styles.body}>La selección automática aparece marcada. Puedes reemplazar cualquier foto y confirmar tus favoritas. Tu confirmación no aumenta la estabilidad del cálculo automático.</Text>
+      <Text accessibilityLiveRegion="polite" style={styles.sectionTitle}>Seleccionadas: {selectedPhotoIds.length} de {k}</Text>
+      {selectedPhotoIds.length === k ? null : <Text style={styles.note}>Quita una foto marcada antes de elegir su reemplazo.</Text>}
+      <View style={styles.resultList}>
+        {rankedPhotos.map((photo, index) => {
+          const isSelected = selected.has(photo.id);
+          return (
+            <View key={photo.id} style={[styles.resultPhoto, isSelected && styles.selectedResolutionPhoto]}>
+              <Text style={styles.rankNumber}>{index + 1}</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel={`Ampliar candidata ${index + 1}: ${filename(photo)}`} onPress={() => setViewerPhoto(photo)} style={styles.resultPreview}><PhotoPreview photo={photo} /></Pressable>
+              <Text style={styles.resultFilename}>{filename(photo)}</Text>
+              <PrimaryButton kind="secondary" label={isSelected ? `Quitar ${filename(photo)}` : `Elegir ${filename(photo)}`} onPress={() => toggle(photo.id)} />
+            </View>
+          );
+        })}
+      </View>
+      <PrimaryButton disabled={selectedPhotoIds.length !== k} label={`Confirmar mi Top ${k}`} onPress={() => onConfirm(selectedPhotoIds)} />
+      <PrimaryButton kind="secondary" label="Ver recomendación provisional" onPress={onViewProvisional} />
       <PhotoViewer photo={viewerPhoto} onClose={() => setViewerPhoto(undefined)} />
     </ScreenLayout>
   );
@@ -322,6 +402,11 @@ export function TopKResultScreen({
   onCreateCarousel,
   onUndo,
   onRestart,
+  canContinue,
+  canReviewSelection,
+  wasManuallyResolved,
+  requiresManualResolution,
+  onResolve,
 }: Readonly<{
   rankedPhotos: readonly PhotoAsset[];
   k: number;
@@ -330,6 +415,11 @@ export function TopKResultScreen({
   onCreateCarousel: () => void;
   onUndo: () => void;
   onRestart: () => void;
+  canContinue: boolean;
+  canReviewSelection: boolean;
+  wasManuallyResolved: boolean;
+  requiresManualResolution: boolean;
+  onResolve: () => void;
 }>): ReactNode {
   const [viewerPhoto, setViewerPhoto] = useState<PhotoAsset | undefined>();
   const [confirming, setConfirming] = useState(false);
@@ -345,8 +435,8 @@ export function TopKResultScreen({
   return (
     <ScreenLayout>
       <Text accessibilityRole="header" style={styles.title}>Tu Top {k}</Text>
-      <Text style={styles.body}>Este resultado refleja tus elecciones. Puedes seguir comparando si quieres afinarlo.</Text>
-      <Text style={styles.note}>Estabilidad de pertenencia: {Math.round(confidence.membershipStability * 100)}% · estabilidad del orden: {Math.round(confidence.orderStability * 100)}%.</Text>
+      <Text style={styles.body}>{wasManuallyResolved ? 'Este Top K combina el ranking estimado con tu resolución final.' : requiresManualResolution ? 'Esta recomendación es provisional: todavía debes resolver las candidatas ambiguas.' : 'Este resultado refleja tus elecciones y la estimación actual.'}</Text>
+      <Text style={styles.note}>Estabilidad estimada del cálculo automático: {Math.round(confidence.expectedTopKOverlap * 100)}%.</Text>
       <View style={styles.resultList}>
         {topPhotos.map((photo, index) => (
           <View key={photo.id} style={styles.resultPhoto}>
@@ -355,9 +445,10 @@ export function TopKResultScreen({
         ))}
       </View>
       <PrimaryButton disabled={sharing} label={sharing ? 'Abriendo compartir…' : 'Compartir o exportar selección'} onPress={() => { void share(); }} />
-      <PrimaryButton label="Seguir comparando" onPress={onContinue} />
+      {canContinue ? <PrimaryButton label="Seguir comparando" onPress={onContinue} /> : null}
+      {canReviewSelection && !requiresManualResolution ? <PrimaryButton label={`Terminar y revisar mi Top ${k}`} onPress={onResolve} /> : null}
       <PrimaryButton kind="secondary" label="Deshacer y volver a comparar" onPress={onUndo} />
-      <PrimaryButton kind="secondary" label="Crear carrusel" onPress={onCreateCarousel} />
+      {requiresManualResolution ? <PrimaryButton label="Resolver mi Top K" onPress={onResolve} /> : <PrimaryButton kind="secondary" label="Crear carrusel" onPress={onCreateCarousel} />}
       <PrimaryButton kind="danger" label="Reiniciar sesión" onPress={() => setConfirming(true)} />
       {confirming ? <ConfirmDialog confirmLabel="Sí, reiniciar" message="Perderás la configuración y todas las comparaciones de esta sesión." onCancel={() => setConfirming(false)} onConfirm={onRestart} title="¿Reiniciar la sesión?" /> : null}
       <PhotoViewer photo={viewerPhoto} onClose={() => setViewerPhoto(undefined)} />
@@ -427,8 +518,9 @@ const styles = StyleSheet.create({
   photoList: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }, setupPhoto: { backgroundColor: '#FFFFFF', borderColor: colors.border, borderRadius: 12, borderWidth: 1, gap: 6, padding: 8, width: 152 }, failedPhoto: { borderColor: '#B23A3A', borderWidth: 2 }, setupPreview: { aspectRatio: 1, overflow: 'hidden', borderRadius: 8 }, filename: { color: colors.ink, fontSize: 13, fontWeight: '600' },
   kPanel: { backgroundColor: '#FFFFFF', borderColor: colors.border, borderRadius: 14, borderWidth: 1, gap: spacing.sm, padding: spacing.md }, kControls: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, justifyContent: 'space-between' }, kInput: { borderColor: colors.border, borderRadius: 10, borderWidth: 1, color: colors.ink, fontSize: 22, fontWeight: '800', minWidth: 62, padding: 9, textAlign: 'center' },
   viewerBackdrop: { alignItems: 'center', backgroundColor: 'rgba(14, 20, 29, 0.85)', flex: 1, justifyContent: 'center', padding: spacing.lg }, viewerCard: { backgroundColor: colors.canvas, borderRadius: 18, gap: spacing.md, maxHeight: '88%', maxWidth: 760, padding: spacing.md, width: '100%' }, viewerImage: { aspectRatio: 1, backgroundColor: '#172032', borderRadius: 12, overflow: 'hidden' }, viewerFilename: { color: colors.ink, fontSize: 16, fontWeight: '700', textAlign: 'center' }, confirmCard: { backgroundColor: colors.canvas, borderRadius: 18, gap: spacing.md, maxWidth: 500, padding: spacing.lg, width: '100%' }, confirmTitle: { color: colors.ink, fontSize: 24, fontWeight: '800' },
-  comparisonHeader: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, justifyContent: 'space-between' }, stabilityCard: { backgroundColor: '#EEF1FF', borderRadius: 12, gap: 3, padding: spacing.md }, stabilityLabel: { color: '#34468F', fontSize: 16, fontWeight: '800' }, stabilityBody: { color: colors.muted, fontSize: 14, lineHeight: 20 }, successCard: { backgroundColor: '#E6F6EC', borderRadius: 12, gap: spacing.sm, padding: spacing.md }, successText: { color: '#166534', fontSize: 16, fontWeight: '800' }, warningCard: { backgroundColor: '#FFF4DD', borderRadius: 12, gap: spacing.sm, padding: spacing.md }, warningText: { color: '#8A4B00', fontSize: 16, fontWeight: '800' },
+  comparisonHeader: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, justifyContent: 'space-between' }, stabilityCard: { backgroundColor: '#EEF1FF', borderRadius: 12, gap: 3, padding: spacing.md }, stabilityLabel: { color: '#34468F', fontSize: 16, fontWeight: '800' }, stabilityBody: { color: colors.muted, fontSize: 14, lineHeight: 20 }, successCard: { backgroundColor: '#E6F6EC', borderRadius: 12, gap: spacing.sm, padding: spacing.md }, successText: { color: '#166534', fontSize: 16, fontWeight: '800' }, warningCard: { backgroundColor: '#FFF4DD', borderRadius: 12, gap: spacing.sm, padding: spacing.md }, warningText: { color: '#8A4B00', fontSize: 16, fontWeight: '800' },
   comparisonPhotos: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, justifyContent: 'center' }, comparisonPhoto: { aspectRatio: 0.72, backgroundColor: '#E8EBEF', borderRadius: 14, flex: 1, maxWidth: 390, overflow: 'hidden' }, comparisonFilename: { backgroundColor: 'rgba(255,255,255,0.9)', color: colors.ink, fontSize: 13, fontWeight: '700', padding: 8, textAlign: 'center' }, vs: { color: colors.muted, fontSize: 16, fontWeight: '900' }, choiceGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }, shortcuts: { color: colors.muted, fontSize: 12, textAlign: 'center' },
   resultList: { gap: spacing.sm }, resultPhoto: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: colors.border, borderRadius: 12, borderWidth: 1, flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, minHeight: 92, padding: 8 }, rankNumber: { color: colors.accent, fontSize: 28, fontWeight: '900', minWidth: 26, textAlign: 'center' }, resultPreview: { height: 72, overflow: 'hidden', borderRadius: 8, width: 72 }, resultFilename: { color: colors.ink, flex: 1, fontSize: 16, fontWeight: '700' },
+  selectedResolutionPhoto: { borderColor: colors.accent, borderWidth: 3 },
   analysisCard: { backgroundColor: '#FFFFFF', borderColor: colors.border, borderRadius: 14, borderWidth: 1, gap: spacing.sm, padding: spacing.md }, analysisCount: { color: colors.ink, fontSize: 18, fontWeight: '800' }, progressTrack: { backgroundColor: '#E2E8F0', borderRadius: 999, height: 12, overflow: 'hidden' }, progressFill: { backgroundColor: colors.accent, borderRadius: 999, height: '100%' },
 });

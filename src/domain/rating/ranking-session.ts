@@ -78,20 +78,25 @@ export function applyComparison(
   const immutableRecord = freezeRecord(record);
   const currentLeft = ratingFor(session, record.leftPhotoId);
   const currentRight = ratingFor(session, record.rightPhotoId);
-  const updated = engine.rate(currentLeft, currentRight, immutableRecord.outcome);
-
-  const ratings = record.outcome.type === 'skip'
-    ? session.ratings
-    : freezeRatings(session.photoIds.map((photoId) => {
-        if (photoId === record.leftPhotoId) return [photoId, updated.left] as const;
-        if (photoId === record.rightPhotoId) return [photoId, updated.right] as const;
-        return [photoId, ratingFor(session, photoId)] as const;
-      }));
+  const nextHistory = Object.freeze([...session.history, immutableRecord]);
+  let ratings: Readonly<Record<PhotoId, PhotoRating>>;
+  if (record.outcome.type === 'skip') {
+    ratings = session.ratings;
+  } else if (engine.inferRatings) {
+    ratings = freezeRatings(Object.entries(engine.inferRatings(session.photoIds, nextHistory)));
+  } else {
+    const updated = engine.rate(currentLeft, currentRight, immutableRecord.outcome);
+    ratings = freezeRatings(session.photoIds.map((photoId) => {
+      if (photoId === record.leftPhotoId) return [photoId, updated.left] as const;
+      if (photoId === record.rightPhotoId) return [photoId, updated.right] as const;
+      return [photoId, ratingFor(session, photoId)] as const;
+    }));
+  }
 
   return Object.freeze({
     photoIds: session.photoIds,
     ratings,
-    history: Object.freeze([...session.history, immutableRecord]),
+    history: nextHistory,
   });
 }
 
